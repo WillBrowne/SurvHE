@@ -52,14 +52,20 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
   if(is.null(formula)) {
     stop("You need to specify a model 'formula', e.g. 'formula=Surv(time,event)~treat'")
   }
-  
+  # ensures method is lower case
+  method <- tolower(method)
+  # ensire method is one of "mle","inla" or "mcmc"
+  if(!method %in% c("mcmc","inla","mle")) {
+    stop("Methods available for use are mcmc, inla or mle")
+  }
+
   # INLA can only do a limited set of models (for now) so if user has selected
   # one that is not available, then falls back on MLE analysis
   availables.mle <- c("genf", "genf.orig", "gengamma", "gengamma.orig", "exp", 
                       "weibull", "weibullPH", "lnorm", "gamma", "gompertz", 
                       "llogis", "exponential", "lognormal")
   availables.inla <- c("exponential","weibull","lognormal","loglogistic")
-  availables.mcmc <- c("weibull","exponential","gengamma","lognormal","gamma","loglogistic")
+  availables.mcmc <- c("weibull","exponential","gengamma","lognormal","gamma","loglogistic","genf")
   
   # Standardises labels for model names
   labs <- distr
@@ -73,8 +79,8 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
   labs[pmatch("llogis",labs)] <- "log-Logistic"
   labs[pmatch("loglogistic",labs)] <- "log-Logistic"
   labs[pmatch("gengamma",labs)] <- "Gen. Gamma"
-  
-  if(method=="inla" | method=="INLA") {
+  labs[pmatch("genf",labs)] <- "Gen. F"
+  if(method=="inla") {
     # Checks that the distribution name(s) are consistent with INLA
     user.distr <- distr
     distr[pmatch("llogis",user.distr)] <- "loglogistic"
@@ -84,10 +90,11 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
     if (any(is.na(pmatch(distr,availables.inla)))) {
       method <- "mle"
       cat("NB: INLA can only fit Exponential, Weibull, log-Logistic or log-Normal parametric survival models. \nFalling back on MLE analysis")
+     
     }
   }
-  if(method=="mcmc" | method=="MCMC") {
-      # Checks that the distribution name(s) are consistent with INLA
+  if(method=="mcmc") {
+      # Checks that the distribution name(s) are consistent with MCMC
       user.distr <- distr
       distr[pmatch("llogis",user.distr)] <- "loglogistic"
       distr[pmatch("exp",user.distr)] <- "exponential"
@@ -116,7 +123,6 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
   } else {
       covs <- factors <- NULL
   }
-
   # If there are covariates, creates a matrix and sets the dimension
   if(!is.null(covs)) {
       X <- data[,pmatch(covs,colnames(data))]
@@ -131,7 +137,7 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
           data[,cols[i]] <- as.factor(data[,cols[i]])
           nlevs <- length(levels(data[,cols[i]]))
           # Now if the method is MCMC recodes the levels of the factors so that they can be used in BUGS
-          if (method=="MCMC" | method=="mcmc") {
+          if (method=="mcmc") {
               levels(data[,cols[i]]) <- 1:nlevs
           }
           D[i] <- nlevs
@@ -149,13 +155,13 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
     km.formula <- as.formula(gsub("inla.surv","Surv",tmp))
     # If the method was originally INLA but has been modified or if the method is mle but the formula is in the wrong
     # format, then need to change the formula to be consistent with the Surv() notation
-    if (method=="mle" | method=="MLE") {
+    if (method=="mle") {
       formula <- km.formula
     }
   } else {
     km.formula <- formula
     # If the method isn't inla but the formula is in Surv() terms, then change the formula
-    if (method=="inla" | method=="INLA") {
+    if (method=="inla") {
       tmp <- deparse(formula)
       formula <- as.formula(gsub("Surv","inla.surv",tmp))
     }
@@ -167,7 +173,7 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
   )
 
   # If method = MLE, then fits the model(s) using flexsurvreg
-  if (method=="mle" | method=="MLE") {
+  if (method=="mle") {
     # Checks that the distribution name(s) are consistent with flexsurv
     # The only problem here is if the user has specified a log-Logistic in INLA terminology
     user.distr <- distr
@@ -186,11 +192,12 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
     time2run <- unlist(lapply(output, function(x) x$time2run)); names(time2run) <- labs
     aic <- unlist(lapply(mod,function(x) x$AIC))
     bic <- unlist(lapply(mod,function(x) -2*x$loglik+length(x$coefficients)*log(x$N)))
+    ## This could be calculated?
     dic <- NULL
   }
   
   # If method = INLA, then fits model(s) using inla
-  if (method=="INLA" | method=="inla") {
+  if (method=="inla") {
     # If INLA is not installed, then asks for it
     if (!isTRUE(requireNamespace("INLA", quietly = TRUE))) {
      stop("You need to install the packages 'INLA'. Please run in your R terminal:\n install.packages('INLA', repos='https://www.math.ntnu.no/inla/R/stable')")
@@ -250,14 +257,14 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
   }
   
   # If method="MCMC" then fits model(s) using BUGS
-  if(method=="mcmc" | method=="MCMC") {
+  if(method=="mcmc") {
     if(!isTRUE(requireNamespace("R2OpenBUGS",quietly=TRUE))) {
      stop("You need to install the package 'R2OpenBUGS'. Please run in your R terminal:\n install.packages('R2OpenBUGS')")
     }
     # 1. Creates a little function that writes the relevant model file
     write.model <- function(position){
       # Associates models with indices (just to read the code more neatly)
-      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6
+      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6 ; genf <- 7 ; gomp <- 8;
       
       # Start model
       start.mod <- "model {"
@@ -271,6 +278,8 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
       mod.data[lnor] <- "t[i] ~ dlnorm(lambda[i],prec)C(cens[i],)"                  # log-normal
       mod.data[gamm] <- "t[i] ~ dgamma(shape,lambda[i])C(cens[i],)"                 # gamma
       mod.data[llog] <- "t.log[i] ~ dlogis(lambda[i],tau)C(cens.log[i],)"           # log-logistic
+      mod.data[genf] <- "t[i] ~ df(shape,lambda[i],0,1)  "        # generalised F
+
       # ... all other models I want to implement
       # Linear predictor 
       linpred <- "beta"
@@ -334,6 +343,7 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
       parameters[lnor] <- "sd ~ dunif(0,10) \nprec <- pow(sd,-2)\n"
       parameters[gamm] <- parameters[1]
       parameters[llog] <- "tau ~ dgamma(a.shape,b.shape)\n"
+      parameters[genf] <- "shape ~ dunif(a.shape,b.shape)\n"
       # ... priors for all the other models I will implement
 
       # End model
@@ -347,6 +357,7 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
       labels[lnor] <- paste0("# log-Normal model - written on: ",Sys.time())
       labels[gamm] <- paste0("# Gamma model - written on: ",Sys.time())
       labels[llog] <- paste0("# log-Logistic model - written on: ",Sys.time())
+      labels[genf] <- paste0("# Generalised F - written on: ",Sys.time())
       
       # Determines which data model has been used and selects the relevant text
       model.string <- paste0(labels[position],"\n",start.mod,"\n",start.loop,"\n",
@@ -358,10 +369,10 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
       list(name=filein,string=model.string)
     }
     
-    # 2. Creates a little function that writes the relevant data to a list (to be passed to OpenBUGS)
+        # 2. Creates a little function that writes the relevant data to a list (to be passed to OpenBUGS)
     write.data <- function(position) {
       # Associates models with indices (just to read the code more neatly)
-      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6
+      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6; genf <- 7;
 
       # Basic data (observed variables -- irrespective of the distribution)
       # Needs to define defaults for the parameters of the intercept & trt.effect
@@ -423,15 +434,17 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
       hyperpars[lnor] <- ""
       hyperpars[gamm] <- hyperpars[1]
       hyperpars[llog] <- hyperpars[1] 
+      hyperpars[genf] <-  "dataBugs$a.shape=0;dataBugs$b.shape=1000;"
+
       eval(parse(text=hyperpars[position]))
       return(dataBugs)
     }
     
     # 3. Creates a little function that writes the inits (to be passed to OpenBUGS)
     # Inits
-    inits <- function(){
+  inits <- function(){
       # Associates models with indices (just to read the code more neatly)
-      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6
+      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6 ; genf <- 7;
       position <- pmatch(distr,availables.mcmc)
       dataBugs <- write.data(position)
       
@@ -448,6 +461,8 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
       inits.par[lnor] <- paste0("inits.list$sd=runif(1)")
       inits.par[gamm] <- paste0("inits.list$shape=runif(1)")
       inits.par[llog] <- paste0("inits.list$tau=runif(1)")
+      inits.par[genf] <- paste0("inits.list$shape=runif(1)")
+
       eval(parse(text=inits.par[position]))
       inits.coef <- paste0("inits.list$beta=rnorm(1)")
       eval(parse(text=inits.coef))
@@ -469,6 +484,8 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
       }
       return(inits.list)
     }
+
+
     
     # 4. Checks that optional parameters to be passed to OpenBUGS are not given as extra arguments and if not
     #    sets the default values
