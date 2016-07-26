@@ -65,7 +65,7 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
                       "weibull", "weibullPH", "lnorm", "gamma", "gompertz", 
                       "llogis", "exponential", "lognormal")
   availables.inla <- c("exponential","weibull","lognormal","loglogistic")
-  availables.mcmc <- c("weibull","exponential","gengamma","lognormal","gamma","loglogistic","genf")
+  availables.mcmc <- c("weibull","exponential","gengamma","lognormal","gamma","loglogistic","genf","gompz","exp_d")
   
   # Standardises labels for model names
   labs <- distr
@@ -80,6 +80,8 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
   labs[pmatch("loglogistic",labs)] <- "log-Logistic"
   labs[pmatch("gengamma",labs)] <- "Gen. Gamma"
   labs[pmatch("genf",labs)] <- "Gen. F"
+  labs[pmatch("exp_d",labs)] <- "Bastardised exp"
+
   if(method=="inla") {
     # Checks that the distribution name(s) are consistent with INLA
     user.distr <- distr
@@ -261,10 +263,11 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
     if(!isTRUE(requireNamespace("R2OpenBUGS",quietly=TRUE))) {
      stop("You need to install the package 'R2OpenBUGS'. Please run in your R terminal:\n install.packages('R2OpenBUGS')")
     }
+    print("writing model")
     # 1. Creates a little function that writes the relevant model file
     write.model <- function(position){
       # Associates models with indices (just to read the code more neatly)
-      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6 ; genf <- 7 ; gomp <- 8;
+      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6 ; genf <- 7 ; gompz <- 8 ; exp_d <- 9
       
       # Start model
       start.mod <- "model {"
@@ -278,7 +281,9 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
       mod.data[lnor] <- "t[i] ~ dlnorm(lambda[i],prec)C(cens[i],)"                  # log-normal
       mod.data[gamm] <- "t[i] ~ dgamma(shape,lambda[i])C(cens[i],)"                 # gamma
       mod.data[llog] <- "t.log[i] ~ dlogis(lambda[i],tau)C(cens.log[i],)"           # log-logistic
-      mod.data[genf] <- "t[i] ~ df(shape,lambda[i],0,1)  "        # generalised F
+      mod.data[genf] <- "t[i] ~ df(df1,df2,lambda[i],shape)C(cens[i],)"        # generalised F
+      mod.data[gompz] <- "dummy[i] <- 0\n dummy[i] ~ dloglik(logLike[i]) \n logLike[i] <- log(lambda[i])+(shape*t[i])+((-lambda[i]/shape)*(exp(shape*t[i]) - 1)) "        # Gompertz dist doing the loglik trick 
+      mod.data[exp_d] <- "dummy[i] <- 0 \n dummy[i] ~ dloglik(logLike[i]) \n logLike[i] <- death[i]*log(lambda[i])-lambda[i]*t[i]"
 
       # ... all other models I want to implement
       # Linear predictor 
@@ -343,7 +348,10 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
       parameters[lnor] <- "sd ~ dunif(0,10) \nprec <- pow(sd,-2)\n"
       parameters[gamm] <- parameters[1]
       parameters[llog] <- "tau ~ dgamma(a.shape,b.shape)\n"
-      parameters[genf] <- "shape ~ dunif(a.shape,b.shape)\n"
+      parameters[genf] <- "shape ~ dgamma(a.shape,b.shape) \n df1 ~ dgamma(a.n,b.n) \n df2 ~ dgamma(a.m,b.m)\n "
+      parameters[gompz] <- "shape ~ dgamma(a.shape,b.shape)\n "
+      parameters[exp_d] <- " "
+
       # ... priors for all the other models I will implement
 
       # End model
@@ -357,7 +365,9 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
       labels[lnor] <- paste0("# log-Normal model - written on: ",Sys.time())
       labels[gamm] <- paste0("# Gamma model - written on: ",Sys.time())
       labels[llog] <- paste0("# log-Logistic model - written on: ",Sys.time())
-      labels[genf] <- paste0("# Generalised F - written on: ",Sys.time())
+      labels[genf] <- paste0("# Generalised F model - written on: ",Sys.time())
+      labels[gompz] <- paste0("# Gompertz model - written on: ",Sys.time())
+      labels[exp_d] <- paste0("# Exponential dummy model - written on: ",Sys.time())
       
       # Determines which data model has been used and selects the relevant text
       model.string <- paste0(labels[position],"\n",start.mod,"\n",start.loop,"\n",
@@ -372,7 +382,7 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
         # 2. Creates a little function that writes the relevant data to a list (to be passed to OpenBUGS)
     write.data <- function(position) {
       # Associates models with indices (just to read the code more neatly)
-      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6; genf <- 7;
+      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6; genf <- 7; gompz <-8; exp_d <- 9;
 
       # Basic data (observed variables -- irrespective of the distribution)
       # Needs to define defaults for the parameters of the intercept & trt.effect
@@ -391,6 +401,12 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
 #                               mu.beta=mu.beta,tau.beta=tau.beta,n=dim(data)[1]
 #                          )
 #         )
+      } else if (position %in% c(7,8,9)){
+        dataBugs <- list(
+          "death"= ifelse(eval(parse(text=paste0("data$",event)))==0,1,0),
+          "t"=eval(parse(text=paste0("data$",time))),
+          mu.beta=mu.beta,tau.beta=tau.beta,n=dim(data)[1]
+          )
       } else {
         dataBugs <- list(
           "cens"=ifelse(eval(parse(text=paste0("data$",event)))==0,eval(parse(text=paste0("data$",time))),0),
@@ -435,23 +451,26 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
       hyperpars[gamm] <- hyperpars[1]
       hyperpars[llog] <- hyperpars[1] 
       hyperpars[genf] <-  "dataBugs$a.shape=0;dataBugs$b.shape=1000;"
-
+      hyperpars[exp_d] <- ""
       eval(parse(text=hyperpars[position]))
       return(dataBugs)
     }
-    
     # 3. Creates a little function that writes the inits (to be passed to OpenBUGS)
     # Inits
   inits <- function(){
       # Associates models with indices (just to read the code more neatly)
-      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6 ; genf <- 7;
+      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6 ; genf <- 7; gompz <- 8 ; exp_d <- 9
       position <- pmatch(distr,availables.mcmc)
       dataBugs <- write.data(position)
       
       inits.list <- list()
       if (position==6) {
         inits.t <- eval(parse(text="inits.list$t.log=ifelse(dataBugs$cens.log!=-20,log(exp(dataBugs$cens.log)+1),NA)"))
-      } else {
+      } else if (position %in% c(7,8,9)){
+        inits.t <- eval(parse(text="inits.list$t=dataBugs$t+1"))
+       
+
+      }else {
         inits.t <- eval(parse(text="inits.list$t=ifelse(dataBugs$cens!=0,(dataBugs$cens)+1,NA)"))
       }
       inits.par <- character()
@@ -461,7 +480,10 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
       inits.par[lnor] <- paste0("inits.list$sd=runif(1)")
       inits.par[gamm] <- paste0("inits.list$shape=runif(1)")
       inits.par[llog] <- paste0("inits.list$tau=runif(1)")
-      inits.par[genf] <- paste0("inits.list$shape=runif(1)")
+      inits.par[genf] <- paste0("inits.list$shape=runif(1);inits.list$df1=runif(1);inits.list$df2=runif(1)")
+      inits.par[gompz] <- paste0("inits.list$shape=runif(1)")
+      inits.par[exp_d] <- ""
+
 
       eval(parse(text=inits.par[position]))
       inits.coef <- paste0("inits.list$beta=rnorm(1)")
@@ -507,15 +529,19 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
     # 5. Creates a little function that defines the parameters to be monitored
     write.params <- function(position) {
       # Associates models with indices (just to read the code more neatly)
-      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6
+      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6 ; genf <-7 ; gompz <- 8 ; exp_d <- 9 ;
       
       params <- character()
       params[weib] <- paste0("c('beta','shape'")
       params[expo] <- paste0("c('beta'")
-      params[ggam] <- paste0("'beta'")
+      params[ggam] <- paste0("c('beta'")
       params[lnor] <- paste0("c('beta','sd'")
       params[gamm] <- paste0("c('beta','shape'")
       params[llog] <- paste0("c('beta','tau','lambda'")
+      params[genf] <- paste0("c('beta','shape','df1','df2'")
+      params[gompz] <- paste0("c('beta','shape'")
+      params[exp_d] <- paste0("c('beta','shape'")
+
       if (!is.null(covs)) {
         params <- paste(params,"'gamma'",sep=",")
       }
@@ -541,9 +567,13 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
       aic <- bic <- dic <- time2run <- NULL
     } else {
       runBUGS <- function(distr) {
+        print("get position")
         position <- pmatch(distr,availables.mcmc)
+        print("write data")
         dataBugs <- write.data(position)
+        print("get params")
         params <- write.params(position)
+        print("write model")
         model.file <- write.model(position)$name
         # Determines which model assumption is selected
         tic <- proc.time()

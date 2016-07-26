@@ -17,15 +17,24 @@ dat$sex <- rbinom(dim(dat)[1],1,.5)
 dat$age <- rpois(dim(dat)[1],32)
 dat$imd <- cut(runif(dim(dat)[1],0,100),breaks=seq(0,100,20)); levels(dat$imd)=1:5
 dat$ethnic <- cut(runif(dim(dat)[1],0,100),breaks=seq(0,100,20)); levels(dat$ethnic)=1:5
+formula=Surv(time,censored)~as.factor(arm)+as.factor(imd)
 
 mods.mle <- c("weibull","exp","gamma","lnorm","llogis","gengamma")   
 mods.inla <- c("exp","weibull","lognormal","loglogistic")
-formula=Surv(time,censored)~as.factor(arm)+as.factor(imd)
+
+
+fit.mle <- fit.models(formula=formula,data=dat,distr="gompz",method="mle")
+fit.mcmc <- fit.models(formula=formula,data=dat,distr="gompz",method="mcmc",n.iter=10000,useWINE = TRUE,WINEPATH=WINEPATH,OpenBUGS.pgm = OpenBUGS.pgm,WINE = WINE)
+
+fit.mle <- fit.models(formula=formula,data=dat,distr="genf",method="mle")
+fit.mcmc <- fit.models(formula=formula,data=dat,distr="genf",method="mcmc",n.iter=10000,useWINE = TRUE,WINEPATH=WINEPATH,OpenBUGS.pgm = OpenBUGS.pgm,WINE = WINE)
+
+
 fit.mle <- fit.models(formula=formula,data=dat,distr=mods.mle)
 fit.inla <- fit.models(formula=formula,data=dat,distr=mods.inla,
                        method="inla",control.family=list(lognormal=list(initial=0)))
-fit.mcmc <- fit.models(formula=formula,data=dat,distr="weibull",method="mcmc",n.iter=10000,
-  useWINE = TRUE,WINEPATH=WINEPATH,OpenBUGS.pgm = OpenBUGS.pgm,WINE = WINE)
+fit.mcmc <- fit.models(formula=formula,data=dat,distr="genf",method="mcmc",n.iter=10000,useWINE = TRUE,WINEPATH=WINEPATH,OpenBUGS.pgm = OpenBUGS.pgm,WINE = WINE)
+fit.mcmc <- fit.models(formula=formula,data=dat,distr="gompz",method="mcmc",n.iter=10000,useWINE = TRUE,WINEPATH=WINEPATH,OpenBUGS.pgm = OpenBUGS.pgm,WINE = WINE)
 
 tmp <- fit.models(formula=formula,data=dat,distr="loglogistic",method="mcmc",n.iter=10000,
   useWINE = TRUE,WINEPATH=WINEPATH,OpenBUGS.pgm = OpenBUGS.pgm,WINE = WINE)
