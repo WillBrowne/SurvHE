@@ -65,7 +65,7 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
                       "weibull", "weibullPH", "lnorm", "gamma", "gompertz", 
                       "llogis", "exponential", "lognormal")
   availables.inla <- c("exponential","weibull","lognormal","loglogistic")
-  availables.mcmc <- c("weibull","exponential","gengamma","lognormal","gamma","loglogistic","genf","gompz","exp_d")
+  availables.mcmc <- c("weibull","exponential","gengamma","lognormal","gamma","loglogistic","genf","gompertz","exp_d")
   
   # Standardises labels for model names
   labs <- distr
@@ -80,6 +80,7 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
   labs[pmatch("loglogistic",labs)] <- "log-Logistic"
   labs[pmatch("gengamma",labs)] <- "Gen. Gamma"
   labs[pmatch("genf",labs)] <- "Gen. F"
+  labs[pmatch("gompz",labs)] <- "Gompertz"
   labs[pmatch("exp_d",labs)] <- "Bastardised exp"
 
   if(method=="inla") {
@@ -282,7 +283,7 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
       mod.data[gamm] <- "t[i] ~ dgamma(shape,lambda[i])C(cens[i],)"                 # gamma
       mod.data[llog] <- "t.log[i] ~ dlogis(lambda[i],tau)C(cens.log[i],)"           # log-logistic
       mod.data[genf] <- "t[i] ~ df(df1,df2,lambda[i],shape)C(cens[i],)"        # generalised F
-      mod.data[gompz] <- "dummy[i] <- 0\n dummy[i] ~ dloglik(logLike[i]) \n logLike[i] <- log(lambda[i])+(shape*t[i])+((-lambda[i]/shape)*(exp(shape*t[i]) - 1)) "        # Gompertz dist doing the loglik trick 
+      mod.data[gompz] <- "dummy[i] <- 0\n dummy[i] ~ dloglik(logLike[i]) \n logLike[i] <- -lambda[i]/shape * (exp(shape * t[i]) -1) + death[i]*(log(lambda[i])+shape*t[i])"        # Gompertz dist doing the loglik trick 
       mod.data[exp_d] <- "dummy[i] <- 0 \n dummy[i] ~ dloglik(logLike[i]) \n logLike[i] <- death[i]*log(lambda[i])-lambda[i]*t[i]"
 
       # ... all other models I want to implement
@@ -451,6 +452,7 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
       hyperpars[gamm] <- hyperpars[1]
       hyperpars[llog] <- hyperpars[1] 
       hyperpars[genf] <-  "dataBugs$a.shape=0;dataBugs$b.shape=1000;"
+      hyperpars[gompz] <-  "dataBugs$a.shape=0.001;dataBugs$b.shape=0.001;"
       hyperpars[exp_d] <- ""
       eval(parse(text=hyperpars[position]))
       return(dataBugs)

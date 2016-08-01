@@ -19,15 +19,61 @@ dat$imd <- cut(runif(dim(dat)[1],0,100),breaks=seq(0,100,20)); levels(dat$imd)=1
 dat$ethnic <- cut(runif(dim(dat)[1],0,100),breaks=seq(0,100,20)); levels(dat$ethnic)=1:5
 formula=Surv(time,censored)~as.factor(arm)+as.factor(imd)
 
+ test <- attributes(terms(formula))$term.labels
+  ncovs <- length(test)
+  formula.temp <- as.formula(gsub("inla.surv","Surv",deparse(formula)))
+  time <- all.vars(formula.temp,data)[1]
+  event <- all.vars(formula.temp,data)[2]
+if (length(ncovs>1)) {
+      Xraw <- model.frame(formula.temp,data)
+      w <- (which(sapply(Xraw,is.factor)==1))-1
+      if (length(w)>=1) {
+          factors <- gsub("as.factor[( )]","",test) 
+          factors <- gsub("[( )]","",factors)
+          covs <- test[-w]
+          if (length(covs)==0) {
+              covs <- NULL
+          }
+      } else {
+          factors <- NULL
+          covs <- test
+      }
+  }
+
+    if(!is.null(covs)) {
+      X <- data[,pmatch(covs,colnames(data))]
+      K <- ifelse(!is.null(dim(X)[2]),dim(X)[2],1)
+  }
+  # If there are categorical covariates (in the vector 'factors'), makes sure they have the right form
+  if(!is.null(factors)) {
+      cols <- pmatch(factors,colnames(data))
+      H <- length(cols)
+      D <- numeric()
+      for (i in 1:H) {
+          data[,cols[i]] <- as.factor(data[,cols[i]])
+          nlevs <- length(levels(data[,cols[i]]))
+          # Now if the method is MCMC recodes the levels of the factors so that they can be used in BUGS
+          if (method=="mcmc") {
+              levels(data[,cols[i]]) <- 1:nlevs
+          }
+          D[i] <- nlevs
+      }
+  }
+
 mods.mle <- c("weibull","exp","gamma","lnorm","llogis","gengamma")   
 mods.inla <- c("exp","weibull","lognormal","loglogistic")
 
 
-fit.mle <- fit.models(formula=formula,data=dat,distr="gompz",method="mle")
-fit.mcmc <- fit.models(formula=formula,data=dat,distr="gompz",method="mcmc",n.iter=10000,useWINE = TRUE,WINEPATH=WINEPATH,OpenBUGS.pgm = OpenBUGS.pgm,WINE = WINE)
+fit.mle <- fit.models(formula=formula,data=dat,distr="gompertz",method="mle")
+fit.mcmc <- fit.models(formula=formula,data=dat,distr="gompertz",method="mcmc",n.iter=10000,useWINE = TRUE,WINEPATH=WINEPATH,OpenBUGS.pgm = OpenBUGS.pgm,WINE = WINE)
 
 fit.mle <- fit.models(formula=formula,data=dat,distr="genf",method="mle")
+
 fit.mcmc <- fit.models(formula=formula,data=dat,distr="genf",method="mcmc",n.iter=10000,useWINE = TRUE,WINEPATH=WINEPATH,OpenBUGS.pgm = OpenBUGS.pgm,WINE = WINE)
+
+fit.mle <- fit.models(formula=formula,data=dat,distr="exp",method="mle")
+fit.mcmc <- fit.models(formula=formula,data=dat,distr="exp",method="mcmc",n.iter=10000,useWINE = TRUE,WINEPATH=WINEPATH,OpenBUGS.pgm = OpenBUGS.pgm,WINE = WINE)
+fit.mcmc.dum <- fit.models(formula=formula,data=dat,distr="exp_d",method="mcmc",n.iter=10000,useWINE = TRUE,WINEPATH=WINEPATH,OpenBUGS.pgm = OpenBUGS.pgm,WINE = WINE)
 
 
 fit.mle <- fit.models(formula=formula,data=dat,distr=mods.mle)
