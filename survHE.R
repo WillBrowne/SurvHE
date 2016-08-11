@@ -1,7 +1,7 @@
 ## SET OF UTILITY FUNCTIONS TO INCLUDE SURVIVAL ANALYSIS RESULTS INTO A HEALTH ECONOMIC MODEL
 ## Gianluca Baio, 4 Mar 2016
 
-fit.models <- function(formula=NULL,data,distr,method="mle",...) {
+fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
   ## Main function - runs the survival analysis with several useful options
   ## formula = a formula specifying the model to be used, in the form
   ##           Surv(time,event)~treatment[+covariates] for flexsurv
@@ -39,12 +39,12 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
   ## newWINE = whether should use newer version of WINE (under Linux or Mac OS) - default = TRUE
   ## WINEPATH = - default = NULL
   ## WINE = - default = NULL
+  ## max_splines 
   
   ##### NB: COULD SPECIFY DIFFERENT control.family OPTIONS FOR THE INLA METHOD WITH MANY DISTRIBUTIONS
   
   # Lists all the additional inputs
   exArgs <- list(...)
-  
   # Avoids the 'no visible binding for global variable' error, when compiling
   model <- NULL
   
@@ -55,10 +55,12 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
   # ensures method is lower case
   method <- tolower(method)
   # ensire method is one of "mle","inla" or "mcmc"
-  if(!method %in% c("mcmc","inla","mle")) {
-    stop("Methods available for use are mcmc, inla or mle")
+  if(!method %in% c("mcmc","inla","mle","splines")) {
+    stop("Methods available for use are mcmc, inla, mle or splines")
   }
-
+ if(is.null(distr) & method != "splines") {
+    stop("You need to specify a distribution")
+  }
   # INLA can only do a limited set of models (for now) so if user has selected
   # one that is not available, then falls back on MLE analysis
   availables.mle <- c("genf", "genf.orig", "gengamma", "gengamma.orig", "exp", 
@@ -66,6 +68,7 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
                       "llogis", "exponential", "lognormal")
   availables.inla <- c("exponential","weibull","lognormal","loglogistic")
   availables.mcmc <- c("weibull","exponential","gengamma","lognormal","gamma","loglogistic","genf","gompertz","exp_d")
+
   
   # Standardises labels for model names
   labs <- distr
@@ -295,6 +298,7 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
         } else {
           linpred <- paste0(linpred,"+",paste0(paste0(paste0("gamma[",1:K,"]"),"*"),
                             "X[i,",1:K,"]",collapse="+"))
+          print(linpred)
         }
       }
       if(!is.null(factors)) {
@@ -302,6 +306,7 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
           linpred <- paste0(linpred,"+",paste0("delta[",factors,"[i]]"),collapse="+")
         } else {
           linpred <- paste0(linpred,"+",paste0(unlist(lapply(1:H,function(i) paste0("delta",i,"[",factors[i],"[i]]"))),collapse="+"))
+          print(linpred)
         }
       }
       ##################################################################################
@@ -469,8 +474,8 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
       if (position==6) {
         inits.t <- eval(parse(text="inits.list$t.log=ifelse(dataBugs$cens.log!=-20,log(exp(dataBugs$cens.log)+1),NA)"))
       } else if (position %in% c(7,8,9)){
-        inits.t <- eval(parse(text="inits.list$t=dataBugs$t+1"))
-       
+        #inits.t <- eval(parse(text="inits.list$t=dataBugs$t+1"))
+        print("t is observed")
 
       }else {
         inits.t <- eval(parse(text="inits.list$t=ifelse(dataBugs$cens!=0,(dataBugs$cens)+1,NA)"))
@@ -660,7 +665,32 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
       dic <- unlist(lapply(mod, function(x) x$DIC))
     }
   }
-  
+  if (method == "splines"){
+     if(!exists("knots",where=exArgs)) {
+    knots <- 5
+  } else { knots <- exArgs$knots}
+  if (knots > 10){
+    stop("More than ten knots may overfit the data, please choose fewer knots")
+  }
+spline_parameter_tuning <- function(knot,scale,data){
+       model <- flexsurvspline(formula, data=data, k=knot, scale=scale)
+       return(model$AIC)
+      }
+spline_dataframe <- expand.grid(seq(1,knots), c("hazard","odds","normal"))
+spline_dataframe$AIC <- apply(spline_dataframe,1,function(x) spline_parameter_tuning(as.numeric(x[1]),x[2],data))
+      ### Idea for testing. Take all non-censored data in the 
+k <- spline_dataframe[spline_dataframe$AIC == min(spline_dataframe$AIC),]$Var1
+scale <- as.character(spline_dataframe[spline_dataframe$AIC == min(spline_dataframe$AIC),]$Var2)
+tic <- proc.time()
+mod <- list(flexsurvspline(formula, data=data, k=k, scale=scale))
+toc <- proc.time()-tic
+
+time2run=toc[3]
+aic <- model$AIC
+bic <- NULL # Need to try and make this work
+dic <- NULL # Need to try and make this work
+
+    }
   # Now defines the outputs of the function
   model.fitting <- list(aic=aic,bic=bic,dic=dic)
   misc <- list(time2run=time2run,formula=formula,km=ObjSurvfit,data=data)
@@ -671,7 +701,7 @@ fit.models <- function(formula=NULL,data,distr,method="mle",...) {
 }
 
 
-make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,...) {
+make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,mode_factor = TRUE,...) {
   ## Creates the survival curves for the fitted model(s)
   # fit = the result of the call to the fit.models function, containing the model fitting (and other relevant information)
   # mod = the index of the model. Default value is 1, but the user can choose which model fit to visualise, 
@@ -716,14 +746,29 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,...) {
   
   # newdata is not given (ie = NULL); this implies n.provided=NULL
   if (n.elements==0) {
-    # If all the covariates are factors, then get survival curves for all the combinations
-    if(all(is.fac) & length(is.fac)>0) {
+    # If all the covariates are factors and mode_factor = False, then get survival curves for all the combinations
+    if(all(is.fac) & length(is.fac)>0 & mode_factor ==FALSE) {
       X <- unique(model.matrix(formula.temp,data=data))
       nam <- as.matrix(unique(X))
       for (i in 2:ncol(nam)) {
         nam[, i] <- paste(colnames(nam)[i],nam[, i], sep = "=")
       }
       rownames(X) <- apply(nam, 1, paste, collapse = ",")
+    }
+    else if (all(is.fac) & length(is.fac)>0 & mode_factor ==TRUE){
+      count <- table(apply(model.matrix(formula.temp,data=data), 1, paste, collapse=" ")) 
+       col_splits <-strsplit(names(count[which.max(count)])," ")
+       mode_col <- as.matrix(sapply(col_splits,as.numeric),by = row)
+       X <- unique(model.matrix(formula.temp,data=data))
+       mode_factor <- which(sapply(seq(1:dim(X)[1]), function(i) all(as.matrix(X[i,]) == mode_col) ))
+       print(mode_factor)
+       ## Is the line below redundant?
+        nam <- as.matrix(unique(X))
+        for (i in 2:ncol(nam)) {
+        nam[, i] <- paste(colnames(nam)[i],nam[, i], sep = "=")
+      }
+      rownames(X) <- apply(nam, 1, paste, collapse = ",")
+      X <- X[mode_factor,]
     }
   }
   # newdata is a list with a single list inside (only one scenario given by the user)
@@ -733,12 +778,27 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,...) {
     } else {
       if(all(is.fac)) {
         # If all the covariates are factors, then get survival curves for all the combinations
-        X <- unique(model.matrix(formula.temp,data=data))
-        nam <- as.matrix(unique(X))[,-1]
-        for (i in 1:ncol(nam)) {
-          nam[, i] <- paste(colnames(nam)[i],nam[, i], sep = "=")
-        }
-        rownames(X) <- apply(nam, 1, paste, collapse = ",")
+        # this is where to add in code to clean it up.
+        # X <- unique(model.matrix(formula.temp,data=data))
+        # nam <- as.matrix(unique(X))[,-1]
+        # for (i in 1:ncol(nam)) {
+        #   nam[, i] <- paste(colnames(nam)[i],nam[, i], sep = "=")
+        # }
+        # rownames(X) <- apply(nam, 1, paste, collapse = ",")
+      count <- table(apply(model.matrix(formula.temp,data=data), 1, paste, collapse=" ")) 
+       col_splits <-strsplit(names(count[which.max(count)])," ")
+       mode_col <- as.matrix(sapply(col_splits,as.numeric),by = row)
+       X <- unique(model.matrix(formula.temp,data=data))
+       mode_factor <- which(sapply(seq(1:dim(X)[1]), function(i) all(as.matrix(X[i,]) == mode_col) ))
+
+       ## Is the line below redundant?
+      nam <- as.matrix(unique(X))
+      for (i in 2:ncol(nam)) {
+        nam[, i] <- paste(colnames(nam)[i],nam[, i], sep = "=")
+      }
+      rownames(X) <- apply(nam, 1, paste, collapse = ",")
+      X <- X[mode_factor,]
+
         n.elements <- ifelse(dim(X)[1]>1,2,1)
       }
     }
@@ -778,11 +838,11 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,...) {
   }
   
   # If the original model(s) have been fitted using MLE & flexsurvreg, then use flexsurv::summary to compute the survival curves
-  if(fit$method=="mle") {
+  if(fit$method %in% c("mle","splines")) {
     dist <- ifelse(dist=="weibull.quiet","weibull",dist)
     S <- sim <-list()
     if(nsim==1) {
-      S[[1]] <- summary(m,t=t)
+      S[[1]] <- summary(m,t=t,newdata = X)
       sim <- NULL
     } else {
       if (is.null(newdata)){
@@ -990,7 +1050,7 @@ print.survHE <- function(x,mod=1,...) {
   # Can select the number of digits to be printed in the output table
   if(!exists("digits",where=exArgs)){digits=6} else {digits=exArgs$digits}
 
-  if(x$method=="mle") {
+  if(x$method %in% c("mle","splines")) {
     res <- x$models[[mod]]$res[,c(1,4,2,3)]
     if (is.null(dim(res))) {names(res) <- c("mean","se","L95%","U95%")} else {colnames(res) <- c("mean","se","L95%","U95%")}
   }
@@ -1198,9 +1258,12 @@ print.survHE <- function(x,mod=1,...) {
     if(x$models[[mod]]$dlist$name=="weibull" | x$models[[mod]]$dlist$name=="weibull.quiet" | x$models[[mod]]$dlist$name=="weibullPH") {label="Weibull"}
     if(x$models[[mod]]$dlist$name=="genf") {label="Generalised F"}
     if(x$models[[mod]]$dlist$name=="gompertz") {label="Gompertz"}
+    if(x$method == "splines") {label = "flexible parametric distribution"}
     if(x$method=="mle") {label.met="Flexsurvreg \n(Maximum Likelihood Estimate)"}
     if(x$method=="inla") {label.met="INLA (Bayesian inference via \nIntegrated Nested Laplace Approximation)"}
     if(x$method=="mcmc") {label.met="OpenBUGS (Bayesian inference via \nMarkov Chain Monte Carlo)"}
+    if(x$method=="splines") {label.met="Flexsurvreg \n(Maximum Likelihood Estimate)"}
+
     cat("\n")
     cat(paste0("Model fit for the ",label," model, obtained using ",label.met,". Running time: ",
                format(x$misc$time2run[[mod]],digits=5,nsmall=3)," seconds"))
