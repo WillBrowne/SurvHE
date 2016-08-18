@@ -67,7 +67,7 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
                       "weibull", "weibullPH", "lnorm", "gamma", "gompertz", 
                       "llogis", "exponential", "lognormal")
   availables.inla <- c("exponential","weibull","lognormal","loglogistic")
-  availables.mcmc <- c("weibull","exponential","gengamma","lognormal","gamma","loglogistic","genf","gompertz","exp_d")
+  availables.mcmc <- c("weibull","exponential","gengamma","lognormal","gamma","loglogistic","genf","gompertz","exp_d","weibullPH")
 
   
   # Standardises labels for model names
@@ -112,7 +112,7 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
   formula.temp <- as.formula(gsub("inla.surv","Surv",deparse(formula)))
   time <- all.vars(formula.temp,data)[1]
   event <- all.vars(formula.temp,data)[2]
-  if (length(ncovs>1)) {
+  if (ncovs>0) {
       Xraw <- model.frame(formula.temp,data)
       w <- (which(sapply(Xraw,is.factor)==1))-1
       if (length(w)>=1) {
@@ -184,7 +184,6 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
     # The only problem here is if the user has specified a log-Logistic in INLA terminology
     user.distr <- distr
     distr[pmatch("loglogistic",user.distr)] <- "llogis"
-
     # Then run the model(s)
     runMLE <- function(distr) {
       tic <- proc.time()
@@ -271,7 +270,7 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
     # 1. Creates a little function that writes the relevant model file
     write.model <- function(position){
       # Associates models with indices (just to read the code more neatly)
-      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6 ; genf <- 7 ; gompz <- 8 ; exp_d <- 9
+      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6 ; genf <- 7 ; gompz <- 8 ; exp_d <- 9 ; weibPH <-10
       
       # Start model
       start.mod <- "model {"
@@ -288,6 +287,7 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
       mod.data[genf] <- "t[i] ~ df(df1,df2,lambda[i],shape)C(cens[i],)"        # generalised F
       mod.data[gompz] <- "dummy[i] <- 0\n dummy[i] ~ dloglik(logLike[i]) \n logLike[i] <- -lambda[i]/shape * (exp(shape * t[i]) -1) + death[i]*(log(lambda[i])+shape*t[i])"        # Gompertz dist doing the loglik trick 
       mod.data[exp_d] <- "dummy[i] <- 0 \n dummy[i] ~ dloglik(logLike[i]) \n logLike[i] <- death[i]*log(lambda[i])-lambda[i]*t[i]"
+      mod.data[weibPH] <- "t[i] ~ dweib(shape,lambda[i])C(cens[i],)" # weibullPH
 
       # ... all other models I want to implement
       # Linear predictor 
@@ -357,6 +357,7 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
       parameters[genf] <- "shape ~ dgamma(a.shape,b.shape) \n df1 ~ dgamma(a.n,b.n) \n df2 ~ dgamma(a.m,b.m)\n "
       parameters[gompz] <- "shape ~ dgamma(a.shape,b.shape)\n "
       parameters[exp_d] <- " "
+      parameters[weibPH] <- "shape ~ dgamma(a.shape,b.shape)\n "
 
       # ... priors for all the other models I will implement
 
@@ -374,6 +375,7 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
       labels[genf] <- paste0("# Generalised F model - written on: ",Sys.time())
       labels[gompz] <- paste0("# Gompertz model - written on: ",Sys.time())
       labels[exp_d] <- paste0("# Exponential dummy model - written on: ",Sys.time())
+      labels[weibPH] <- paste0("# Weibull model (PH parameterisation) - written on: ",Sys.time())
       
       # Determines which data model has been used and selects the relevant text
       model.string <- paste0(labels[position],"\n",start.mod,"\n",start.loop,"\n",
@@ -388,7 +390,7 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
         # 2. Creates a little function that writes the relevant data to a list (to be passed to OpenBUGS)
     write.data <- function(position) {
       # Associates models with indices (just to read the code more neatly)
-      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6; genf <- 7; gompz <-8; exp_d <- 9;
+      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6; genf <- 7; gompz <-8; exp_d <- 9; weibPH <- 10
 
       # Basic data (observed variables -- irrespective of the distribution)
       # Needs to define defaults for the parameters of the intercept & trt.effect
@@ -397,8 +399,8 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
       ### CHECK: DO I NEED TO USE eval(parse(text=time))???
       if(position==6) {
         dataBugs <- list(
-          "cens"=ifelse(eval(parse(text=paste0("data$",event)))==0,eval(parse(text=paste0("log(data$",time,")"))),0),
-          "t.log"=ifelse(eval(parse(text=paste0("data$",event)))==1,eval(parse(text=paste0("log(data$",time,")"))),NA),
+          "cens.log"=ifelse(eval(parse(text=paste0("data$",event)))==0,eval(parse(text=paste0("log(data$",time,")")))+1,0),
+          "t.log"=ifelse(eval(parse(text=paste0("data$",event)))==1,eval(parse(text=paste0("log(data$",time,")")))+1,NA),
           mu.beta=mu.beta,tau.beta=tau.beta,n=dim(data)[1]
         )
 #         dataBugs <- with(data,
@@ -459,6 +461,8 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
       hyperpars[genf] <-  "dataBugs$a.shape=0;dataBugs$b.shape=1000;"
       hyperpars[gompz] <-  "dataBugs$a.shape=0.001;dataBugs$b.shape=0.001;"
       hyperpars[exp_d] <- ""
+      hyperpars[weibPH] <- hyperpars[1] 
+
       eval(parse(text=hyperpars[position]))
       return(dataBugs)
     }
@@ -466,7 +470,7 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
     # Inits
   inits <- function(){
       # Associates models with indices (just to read the code more neatly)
-      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6 ; genf <- 7; gompz <- 8 ; exp_d <- 9
+      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6 ; genf <- 7; gompz <- 8 ; exp_d <- 9 ; weibPH <- 10
       position <- pmatch(distr,availables.mcmc)
       dataBugs <- write.data(position)
       
@@ -490,6 +494,7 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
       inits.par[genf] <- paste0("inits.list$shape=runif(1);inits.list$df1=runif(1);inits.list$df2=runif(1)")
       inits.par[gompz] <- paste0("inits.list$shape=runif(1)")
       inits.par[exp_d] <- ""
+      inits.par[weibPH] <- paste0("inits.list$shape=runif(1)")
 
 
       eval(parse(text=inits.par[position]))
@@ -536,7 +541,7 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
     # 5. Creates a little function that defines the parameters to be monitored
     write.params <- function(position) {
       # Associates models with indices (just to read the code more neatly)
-      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6 ; genf <-7 ; gompz <- 8 ; exp_d <- 9 ;
+      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6 ; genf <-7 ; gompz <- 8 ; exp_d <- 9 ; weibPH <- 10;
       
       params <- character()
       params[weib] <- paste0("c('beta','shape'")
@@ -548,6 +553,7 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
       params[genf] <- paste0("c('beta','shape','df1','df2'")
       params[gompz] <- paste0("c('beta','shape'")
       params[exp_d] <- paste0("c('beta','shape'")
+      params[weibPH] <- paste0("c('beta','shape'")
 
       if (!is.null(covs)) {
         params <- paste(params,"'gamma'",sep=",")
@@ -578,6 +584,8 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
         position <- pmatch(distr,availables.mcmc)
         print("write data")
         dataBugs <- write.data(position)
+        print(names(dataBugs))
+        print(position)
         print("get params")
         params <- write.params(position)
         print("write model")
@@ -600,6 +608,8 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
       
       ## NEED TO RECOMPUTE THE DEVIANCE FOR THE log-logistic MODEL WHICH IS FITTED TO *log* DATA!
       if(mod[[i]]$dlist$name=="loglogistic") {
+        position <- pmatch(mod[[i]]$dlist$name,availables.mcmc)
+        dataBugs <- mod$dataBugs <- write.data(position) 
         # Computes the density for the log-logistic model
         f <- function(t,shape,scale){
           num <- (shape/scale)*(t/scale)^(shape-1)
@@ -624,6 +634,7 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
         scale2 <- scale[,which(is.na(dataBugs$t.log))]
         
         # Defines the relevant times (on the NATURAL scale)
+        print(names(dataBugs))
         obs.time <- exp(dataBugs$t.log[!is.na(dataBugs$t.log)])
         cens.time <- exp(dataBugs$cens.log[is.na(dataBugs$t.log)])
 #        all.time <- ifelse(is.na(dataBugs$t.log),exp(dataBugs$cens.log),exp(dataBugs$t.log))
@@ -679,14 +690,16 @@ spline_parameter_tuning <- function(knot,scale,data){
 spline_dataframe <- expand.grid(seq(1,knots), c("hazard","odds","normal"))
 spline_dataframe$AIC <- apply(spline_dataframe,1,function(x) spline_parameter_tuning(as.numeric(x[1]),x[2],data))
       ### Idea for testing. Take all non-censored data in the 
+print(spline_dataframe)
 k <- spline_dataframe[spline_dataframe$AIC == min(spline_dataframe$AIC),]$Var1
 scale <- as.character(spline_dataframe[spline_dataframe$AIC == min(spline_dataframe$AIC),]$Var2)
 tic <- proc.time()
+### add knots and scale used in final model
 mod <- list(flexsurvspline(formula, data=data, k=k, scale=scale))
 toc <- proc.time()-tic
 
 time2run=toc[3]
-aic <- model$AIC
+aic <- mod[[1]]$AIC
 bic <- NULL # Need to try and make this work
 dic <- NULL # Need to try and make this work
 
@@ -701,7 +714,7 @@ dic <- NULL # Need to try and make this work
 }
 
 
-make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,mode_factor = TRUE,...) {
+make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,...) {
   ## Creates the survival curves for the fitted model(s)
   # fit = the result of the call to the fit.models function, containing the model fitting (and other relevant information)
   # mod = the index of the model. Default value is 1, but the user can choose which model fit to visualise, 
@@ -739,15 +752,14 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,mode_factor = TRUE,..
   w <- (which(sapply(Xraw,is.factor)==1))-1
   X <- matrix(colMeans(model.matrix(formula.temp,data=data)), nrow = 1)
   if(fit$method=="inla") {
-    colnames(X) <- rownames(m$summary.fixed)
-  } else {
-    colnames(X) <- colnames(model.matrix(formula.temp,data=data)) #c("Intercept",test)
-  }
-  
+     colnames(X) <- rownames(m$summary.fixed)
+   } else {
+     colnames(X) <- colnames(model.matrix(formula.temp,data=data)) #c("Intercept",test)
+   }
   # newdata is not given (ie = NULL); this implies n.provided=NULL
   if (n.elements==0) {
     # If all the covariates are factors and mode_factor = False, then get survival curves for all the combinations
-    if(all(is.fac) & length(is.fac)>0 & mode_factor ==FALSE) {
+    if(all(is.fac) & length(is.fac)>0 ) {
       X <- unique(model.matrix(formula.temp,data=data))
       nam <- as.matrix(unique(X))
       for (i in 2:ncol(nam)) {
@@ -755,7 +767,7 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,mode_factor = TRUE,..
       }
       rownames(X) <- apply(nam, 1, paste, collapse = ",")
     }
-    else if (all(is.fac) & length(is.fac)>0 & mode_factor ==TRUE){
+    else if (all(is.fac) & length(is.fac)>0 ){
       count <- table(apply(model.matrix(formula.temp,data=data), 1, paste, collapse=" ")) 
        col_splits <-strsplit(names(count[which.max(count)])," ")
        mode_col <- as.matrix(sapply(col_splits,as.numeric),by = row)
@@ -777,19 +789,7 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,mode_factor = TRUE,..
       stop("You need to provide data for *all* the covariates specified in the model, in the list 'newdata'")
     } else {
       if(all(is.fac)) {
-        # If all the covariates are factors, then get survival curves for all the combinations
-        # this is where to add in code to clean it up.
-        # X <- unique(model.matrix(formula.temp,data=data))
-        # nam <- as.matrix(unique(X))[,-1]
-        # for (i in 1:ncol(nam)) {
-        #   nam[, i] <- paste(colnames(nam)[i],nam[, i], sep = "=")
-        # }
-        # rownames(X) <- apply(nam, 1, paste, collapse = ",")
-      count <- table(apply(model.matrix(formula.temp,data=data), 1, paste, collapse=" ")) 
-       col_splits <-strsplit(names(count[which.max(count)])," ")
-       mode_col <- as.matrix(sapply(col_splits,as.numeric),by = row)
        X <- unique(model.matrix(formula.temp,data=data))
-       mode_factor <- which(sapply(seq(1:dim(X)[1]), function(i) all(as.matrix(X[i,]) == mode_col) ))
 
        ## Is the line below redundant?
       nam <- as.matrix(unique(X))
@@ -797,7 +797,7 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,mode_factor = TRUE,..
         nam[, i] <- paste(colnames(nam)[i],nam[, i], sep = "=")
       }
       rownames(X) <- apply(nam, 1, paste, collapse = ",")
-      X <- X[mode_factor,]
+      #X <- X[mode_factor,]
 
         n.elements <- ifelse(dim(X)[1]>1,2,1)
       }
@@ -842,11 +842,29 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,mode_factor = TRUE,..
     dist <- ifelse(dist=="weibull.quiet","weibull",dist)
     S <- sim <-list()
     if(nsim==1) {
-      S[[1]] <- summary(m,t=t,newdata = X)
+        if(is.null(newdata)) {
+    df <- data.table(data)
+        test <- attributes(terms(formula))$term.labels
+        ncovs <- length(test)
+        factors <- gsub("as.factor[( )]","",test) 
+        factors <- gsub("[( )]","",factors)
+        nd <- df[,.N,by=factors][N==max(N),]
+        if (ncol(nd)==1) { 
+          S[[1]] <- summary(m,t=t)
+         } else {
+      S[[1]] <- summary(m,t=t,newdata = nd) }
+
       sim <- NULL
+  } else {
+    newdatalist <- lapply(1:length(newdata),function(x) data.frame(l[[x]]))
+    nd <- do.call("rbind", newdatalist)
+    S[[1]] <- summary(m,t=t,newdata = nd)
+      sim <- NULL
+  }
+        
     } else {
       if (is.null(newdata)){
-        sim <- lapply(1:dim(X)[1],function(i) flexsurv::normboot.flexsurvreg(m,B=nsim,X=matrix(X[i,-1],nrow=1)))
+          sim <- list(flexsurv::normboot.flexsurvreg(m,B=nsim,newdata=X))
       } else {
         sim <- lapply(1:n.elements,function(i) flexsurv::normboot.flexsurvreg(m,B=nsim,newdata=newdata[[i]]))
       }
@@ -983,10 +1001,25 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,mode_factor = TRUE,..
           cbind(t,dlnorm(t,mulog[j],sdlog)/hlnorm(t,mulog[j],sdlog))
         })
       }
+      if (m$dlist$name=="weibullPH") {
+        shape <- mean(m$sims.matrix[,"shape"])
+        scale  <- exp(linpred)^(1/(-shape))
+        S[[1]] <- lapply(1:length(scale),function(j) {
+            cbind(t,dweibull(t,shape,scale[j])/hweibull(t,shape,scale[j]))
+        })
+      }
+      if (m$dlist$name=="gamma") {
+        shape <- mean(m$sims.matrix[,"shape"])
+        scale  <- exp(linpred)
+        S[[1]] <- lapply(1:length(scale),function(j) {
+            cbind(t,pgamma(t*scale[j],shape))
+        })
+      }
       ### ALL THE OTHER CASES!
       sim <- NULL
     } else {
       rels <- c(grep("beta",rownames(m$summary)),grep("delta",rownames(m$summary)),grep("gamma",rownames(m$summary)))
+      print(rels)
       sim <- m$sims.matrix[,rels]
       linpred <- matrix(unlist(lapply(1:nsim,function(i) apply(sim[i,]*t(X),2,sum))),nrow=nsim,byrow=T)
       if (m$dlist$name=="weibull") {
@@ -1021,6 +1054,25 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,mode_factor = TRUE,..
         S <- lapply(1:nsim,function(i) {
           lapply(1:dim(mulog)[2],function(j) {
             cbind(t,dlnorm(t,mulog[i,j],sdlog[i])/hlnorm(t,mulog[i,j],sdlog[i]))
+          })
+        })
+      }
+      if (m$dlist$name=="weibullPH") {
+        shape <- m$sims.matrix[,"shape"]
+        scale  <- exp(linpred)^(1/(-shape))
+        S <- lapply(1:nsim,function(i) {
+          lapply(1:dim(scale)[2],function(j) {
+            cbind(t,dweibull(t,shape[i],scale[i,j])/hweibull(t,shape[i],scale[i,j]))
+          })
+        })
+      }
+      ### needs to be fixed
+      if (m$dlist$name=="gamma") {
+        shape <- m$sims.matrix[,"shape"]
+        scale  <- exp(linpred)
+        S <- lapply(1:nsim,function(i) {
+          lapply(1:dim(scale)[2],function(j) {
+            cbind(t,pgamma(t*scale[i,j],shape[i]))
           })
         })
       }
@@ -1360,7 +1412,8 @@ plot.survHE <- function(x,...) {
   if (!exists("ylab",where=exArgs)) {yl="Survival"} else {yl=exArgs$ylab}
   if (!exists("lab.trt",where=exArgs)) {lab.trt=names(x$misc$km$strata)} else {lab.trt=names(x$km$strata)<-exArgs$lab.trt}
   if (!exists("cex.trt",where=exArgs)) {cex.trt=.8} else {cex.trt=exArgs$cex.trt}
-  if (!exists("n.risk",where=exArgs)) {nrisk=TRUE} else {nrisk=exArgs$n.risk}
+  if (!exists("n.risk",where=exArgs)) {nrisk=FALSE} else {nrisk=exArgs$n.risk}
+  if (!exists("newdata",where=exArgs)) {newdata = NULL} else {newdata=exArgs$newdata}
   if (!exists("xlim",where=exArgs) & !exists("t",where=exArgs)) {
     xlm=range(pretty(x$misc$km$time))
   } 
@@ -1405,9 +1458,9 @@ plot.survHE <- function(x,...) {
     colors <- colors-1
     plot(0,0,col="white",xlab=xl,ylab=yl,axes=F,xlim=xlm,ylim=c(0,1));axis(1);axis(2);
   }
-  
-  res <- lapply(1:nmodels,function(i) make.surv(x,nsim=1,t=t,mod=i))
+  res <- lapply(1:nmodels,function(i) make.surv(x,nsim=1,t=t,mod=i,newdata = newdata))
   for (i in 1:nmodels) {
+    print(length(res))
     pts <- lapply(res[[i]]$S[[1]],function(m) cbind(m[,1],m[,2]))
     lapply(1:length(pts), function(x) points(pts[[x]],t="l",col=colors[i],lty=x))
   }

@@ -3,6 +3,7 @@ setwd("~/Msc/Diss/")
 
 library(flexsurv)
 library(INLA)
+library(data.table)
 library(R2OpenBUGS)
 WINE="/opt/local/bin/wine"
 WINEPATH="/opt/local/bin/winepath"
@@ -24,7 +25,7 @@ formula=Surv(time,censored)~as.factor(arm)+as.factor(imd)
   formula.temp <- as.formula(gsub("inla.surv","Surv",deparse(formula)))
   time <- all.vars(formula.temp,data)[1]
   event <- all.vars(formula.temp,data)[2]
-if (length(ncovs>1)) {
+if (length(ncovs)>1) {
       Xraw <- model.frame(formula.temp,data)
       w <- (which(sapply(Xraw,is.factor)==1))-1
       if (length(w)>=1) {
@@ -59,12 +60,35 @@ if (length(ncovs>1)) {
           D[i] <- nlevs
       }
   }
+        print("get position")
+        position <- pmatch(distr,availables.mcmc)
+        print("write data")
+        dataBugs <- write.data(position)
+        print("get params")
+        params <- write.params(position)
+        print("write model")
+        model.file <- write.model(position)$name
+model <- R2OpenBUGS::bugs(data=dataBugs,inits=inits,parameters.to.save=params,
+                                  model.file=model.file,n.chains=2,n.iter=10000,
+                                  n.burnin=5000,n.thin=0,debug=TRUE,
+                                  OpenBUGS.pgm=OpenBUGS.pgm,useWINE=TRUE,
+                                  WINEPATH=WINEPATH,WINE=WINE)
+
+x <- rgenf()
+dfmod <- R2OpenBUGS::bugs(data=datadf,inits=list(inits1,inits2),parameters.to.save=params,
+                                  model.file="~/Msc/Diss/genf.txt",n.chains=2,n.iter=10000,
+                                  n.burnin=5000,n.thin=0,debug=TRUE,
+                                  OpenBUGS.pgm=OpenBUGS.pgm,useWINE=TRUE,
+                                  WINEPATH=WINEPATH,WINE=WINE)
+
 
 mods.mle <- c("weibull","exp","gamma","lnorm","llogis","gengamma")   
 mods.inla <- c("exp","weibull","lognormal","loglogistic")
 
+fit.splines <- fit.models(formula=formula,data=data,knots = 4,method="splines")
 
-fit.mle <- fit.models(formula=formula,data=dat,distr="gompertz",method="mle")
+
+fit.mle <- 
 fit.mcmc <- fit.models(formula=formula,data=dat,distr="gompertz",method="mcmc",n.iter=10000,useWINE = TRUE,WINEPATH=WINEPATH,OpenBUGS.pgm = OpenBUGS.pgm,WINE = WINE)
 
 fit.mle <- fit.models(formula=formula,data=dat,distr="genf",method="mle")
@@ -79,6 +103,9 @@ fit.mcmc.dum <- fit.models(formula=formula,data=dat,distr="exp_d",method="mcmc",
 fit.mle <- fit.models(formula=formula,data=dat,distr=mods.mle)
 fit.inla <- fit.models(formula=formula,data=dat,distr=mods.inla,
                        method="inla",control.family=list(lognormal=list(initial=0)))
+
+fit.inla <- fit.models(formula=formula,data=dat,distr="exp", method="inla")
+"exp"
 fit.mcmc <- fit.models(formula=formula,data=dat,distr="genf",method="mcmc",n.iter=10000,useWINE = TRUE,WINEPATH=WINEPATH,OpenBUGS.pgm = OpenBUGS.pgm,WINE = WINE)
 fit.mcmc <- fit.models(formula=formula,data=dat,distr="gompz",method="mcmc",n.iter=10000,useWINE = TRUE,WINEPATH=WINEPATH,OpenBUGS.pgm = OpenBUGS.pgm,WINE = WINE)
 
