@@ -411,7 +411,7 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
 #         )
       } else if (position %in% c(7,8,9)){
         dataBugs <- list(
-          "death"= ifelse(eval(parse(text=paste0("data$",event)))==0,1,0),
+          "death"= ifelse(eval(parse(text=paste0("data$",event)))==1,1,0),
           "t"=eval(parse(text=paste0("data$",time))),
           mu.beta=mu.beta,tau.beta=tau.beta,n=dim(data)[1]
           )
@@ -808,6 +808,7 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,...) {
       stop("You need to provide data for *all* the covariates specified in the model, in the list 'newdata'")
     } else {
       X <- matrix(rep(X,n.elements),nrow=n.elements,byrow=T)
+      print(X)
       if(fit$method=="inla") {
         colnames(X) <- rownames(m$summary.fixed)
       } else {
@@ -816,7 +817,9 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,...) {
       # Just like flexsurv, if you provide values for the covariates, you have to do so for *all*!
       names <- unique(unlist(lapply(newdata,function(x) names(x))))
       positions <- lapply(1:length(names),function(i) which(grepl(names[i],colnames(X))))
-      temp <- matrix(unlist(newdata),nrow=length(newdata),byrow=T); colnames(temp) <- names
+      print(positions)
+      temp <- matrix(unlist(newdata),nrow=length(newdata),byrow=T)
+      colnames(temp) <- names
       # Could change the value in X with the value in temp[-w] for the continuous variables
       contin <- (1:length(names))[-w]
       # Do this only if there're some continuous covariates!
@@ -856,7 +859,7 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,...) {
 
       sim <- NULL
   } else {
-    newdatalist <- lapply(1:length(newdata),function(x) data.frame(l[[x]]))
+    newdatalist <- lapply(1:length(newdata),function(x) data.frame(newdata[[x]]))
     nd <- do.call("rbind", newdatalist)
     S[[1]] <- summary(m,t=t,newdata = nd)
       sim <- NULL
@@ -968,6 +971,7 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,...) {
   }
   
   if(fit$method=="mcmc") {
+
     # Now computes the survival curves for the relevant case
     if (nsim==1) {
       S <- list()
@@ -1012,16 +1016,27 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,...) {
         shape <- mean(m$sims.matrix[,"shape"])
         scale  <- exp(linpred)
         S[[1]] <- lapply(1:length(scale),function(j) {
-            cbind(t,pgamma(t*scale[j],shape))
+            cbind(t,dgamma(t,shape,scale[j])/hgamma(t,shape,scale[j]))
+        })
+      }
+        if (m$dlist$name=="gompertz") {
+        shape <- mean(m$sims.matrix[,"shape"])
+        scale <- exp(linpred)
+        S[[1]] <- lapply(1:length(scale),function(j) {
+            cbind(t,dgompertz(t,shape,1/scale[j])/hgompertz(t,shape,1/scale[j]))
         })
       }
       ### ALL THE OTHER CASES!
       sim <- NULL
     } else {
       rels <- c(grep("beta",rownames(m$summary)),grep("delta",rownames(m$summary)),grep("gamma",rownames(m$summary)))
-      print(rels)
       sim <- m$sims.matrix[,rels]
+      if (rels ==1){ 
+        linpred <- matrix(unlist(lapply(1:nsim,function(i) apply(sim[i]*t(X),2,sum))),nrow=nsim,byrow=T)
+      }
+      else{
       linpred <- matrix(unlist(lapply(1:nsim,function(i) apply(sim[i,]*t(X),2,sum))),nrow=nsim,byrow=T)
+    }
       if (m$dlist$name=="weibull") {
         shape <- m$sims.matrix[,"shape"]
         scale <- exp(-linpred)
@@ -1059,7 +1074,7 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,...) {
       }
       if (m$dlist$name=="weibullPH") {
         shape <- m$sims.matrix[,"shape"]
-        scale  <- exp(linpred)^(1/(-shape))
+        scale  <- exp(linpred)^(1/(-shape[1:nsim]))
         S <- lapply(1:nsim,function(i) {
           lapply(1:dim(scale)[2],function(j) {
             cbind(t,dweibull(t,shape[i],scale[i,j])/hweibull(t,shape[i],scale[i,j]))
@@ -1072,12 +1087,22 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,...) {
         scale  <- exp(linpred)
         S <- lapply(1:nsim,function(i) {
           lapply(1:dim(scale)[2],function(j) {
-            cbind(t,pgamma(t*scale[i,j],shape[i]))
+            cbind(t,1-pgamma(t,shape[i],scale[i,j]))
           })
         })
       }
-      ## ALL OTHER CASES!!!
+      if (m$dlist$name=="gompertz") {
+        shape <- m$sims.matrix[,"shape"]
+        scale  <- exp(linpred)
+        S <- lapply(1:nsim,function(i) {
+          lapply(1:dim(scale)[2],function(j) {
+            cbind(t,dgompertz(t,shape[i],scale[i,j])/hgompertz(t,shape[i],scale[i,j]))
+          })
+        })
+      }
     }
+      ## ALL OTHER CASES!!!
+
   }
   n.elements <- length(S[[1]]) 
   mat <- lapply(1:n.elements,function(j) matrix(unlist(lapply(1:nsim,function(i) S[[i]][[j]][,2])),nrow=nsim,byrow=T))
@@ -1460,7 +1485,6 @@ plot.survHE <- function(x,...) {
   }
   res <- lapply(1:nmodels,function(i) make.surv(x,nsim=1,t=t,mod=i,newdata = newdata))
   for (i in 1:nmodels) {
-    print(length(res))
     pts <- lapply(res[[i]]$S[[1]],function(m) cbind(m[,1],m[,2]))
     lapply(1:length(pts), function(x) points(pts[[x]],t="l",col=colors[i],lty=x))
   }
@@ -1637,8 +1661,8 @@ model.fit.plot <- function(fit,type="aic",...) {
     xpd=F,                                               # Graphical parameter to clip at the lowest end of the range
     horiz=T,                                             # Plots the graph horizontally (better readability)
     las=1,                                               # Rotates the labels on the y-axis (better readability)
-    cex.names=cex.names,                                 # Rescales the labels on the y-axis to 80% of normal size
-    main=main
+    cex.names=cex.names                                # Rescales the labels on the y-axis to 80% of normal size
+    #main=main
   )
   # And then adds the actual value of the AIC/BIC for each of the models
   text(mf[,2],		                                       # Position of the text on the x-axis
@@ -1649,6 +1673,64 @@ model.fit.plot <- function(fit,type="aic",...) {
   )
 }
 
+test.linear.assumptions <- function(fit,mod=1){
+  m <- fit$models[[mod]]
+  dist <- m$dlist$name
+  split_vector <- c(1)
+  for(i in 2:length(fit$misc$km$time)){
+  if(fit$misc$km$time[i]<fit$misc$km$time[i-1]){
+  split_vector <- c(split_vector,i-1,i)
+  }
+  }
+  split_vector <- c(split_vector,length(fit$misc$km$time))
+  split_mat <- matrix(split_vector,length(split_vector)/2,2)
+  times <- lapply(1:dim(split_mat)[1],function(x) fit$misc$km$time[split_mat[x,][1]:split_mat[x,][2]])
+  survs <- lapply(1:dim(split_mat)[1],function(x) fit$misc$km$surv[split_mat[x,][1]:split_mat[x,][2]])
+  if (dist == "Exponential"){
+  plot(0,0,col="white",xlab='time',ylab='log(S(t))',axes=F,xlim=range(pretty(fit$misc$km$time)))
+  axis(1)
+  axis(2)
+  pts <- lapply(1:dim(split_mat)[1],function(m) cbind(times[[m]],log(survs[[m]])))
+    lapply(1:length(pts), function(x) points(pts[[x]],t="l",lty=x))
+  }
+  if (dist %in% c("weibull","weibullPH")){
+  plot(0,0,col="white",xlab='log(time)',ylab='log(-log(S(t)))',axes=F,xlim=range(pretty(log(fit$misc$km$time))), ylim =range(pretty(log(-log(survs[[1]])))))
+  axis(1)
+  axis(2)
+  pts <- lapply(1:dim(split_mat)[1],function(m) cbind(log(times[[m]]),log(-log(survs[[m]]))))
+    lapply(1:length(pts), function(x) points(pts[[x]],t="l",lty=x))
+  }
+  if (dist == "llogis"){
+  plot(0,0,col="white",xlab='time',ylab='log(S(t)/(1-S(t)))',axes=F,xlim=range(pretty(log(fit$misc$km$time))), ylim =range(pretty(log(survs[[1]]/(1-survs[[1]])))))
+  axis(1)
+  axis(2)
+  pts <- lapply(1:dim(split_mat)[1],function(m) cbind(log(times[[m]]),log(survs[[m]]/(1-survs[[m]]))))
+    lapply(1:length(pts), function(x) points(pts[[x]],t="l",lty=x))
+    }
+    if (dist == "lognormal"){
+      ### add log normal 
+  plot(0,0,col="white",xlab='time',ylab='log(S(t))',axes=F,xlim=range(pretty(log(fit$misc$km$time))), ylim =range())
+  axis(1)
+  axis(2)
+  pts <- lapply(1:dim(split_mat)[1],function(m) cbind(times[[m]],qnorm(1-survs[[m]])))
+    lapply(1:length(pts), function(x) points(pts[[x]],t="l",lty=x))
+  }
+  if (dist == "gompertz"){
+  estimate.h <- function(s,t){
+  denom <- t-c(t[-1],max(t)+1)
+  print(denom)
+  numerator <- log(s) - log(c(s[-1],0))
+  print(numerator)
+  return(-numerator/denom)
+}
+  plot(0,0,col="white",xlab='log(time)',ylab='h(t)',axes=F,xlim=range(pretty(fit$misc$km$time)), ylim =range(pretty(estimate.h(survs[[1]],times[[1]]))))
+  axis(1)
+  axis(2)
+  pts <- lapply(1:dim(split_mat)[1],function(m) data.table(cbind(times[[m]],estimate.h(survs[[m]],times[[m]])))[V2!=0,])
+    lapply(1:length(pts), function(x) points(pts[[x]],t="l",lty=x))
+
+  }
+}
 
 # ################################################################################################################################
 # ## DO WE STILL NEED THIS????
