@@ -67,7 +67,7 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
                       "weibull", "weibullPH", "lnorm", "gamma", "gompertz", 
                       "llogis", "exponential", "lognormal")
   availables.inla <- c("exponential","weibull","lognormal","loglogistic")
-  availables.mcmc <- c("weibull","exponential","gengamma","lognormal","gamma","loglogistic","genf","gompertz","exp_d","weibullPH")
+  availables.mcmc <- c("weibull","exponential","gengamma","lognormal","gamma","loglogistic","genf","gompertz","dexp","weibullPH","dloglogis")
 
   
   # Standardises labels for model names
@@ -84,7 +84,8 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
   labs[pmatch("gengamma",labs)] <- "Gen. Gamma"
   labs[pmatch("genf",labs)] <- "Gen. F"
   labs[pmatch("gompz",labs)] <- "Gompertz"
-  labs[pmatch("exp_d",labs)] <- "Bastardised exp"
+  labs[pmatch("dexp",labs)] <- "Bastardised exp"
+  labs[pmatch("dloglogis",labs)] <- "log-Logistic"
 
   if(method=="inla") {
     # Checks that the distribution name(s) are consistent with INLA
@@ -270,7 +271,7 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
     # 1. Creates a little function that writes the relevant model file
     write.model <- function(position){
       # Associates models with indices (just to read the code more neatly)
-      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6 ; genf <- 7 ; gompz <- 8 ; exp_d <- 9 ; weibPH <-10
+      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6 ; genf <- 7 ; gompz <- 8 ; dexp <- 9 ; weibPH <-10 ; dloglogis <- 11
       
       # Start model
       start.mod <- "model {"
@@ -286,8 +287,9 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
       mod.data[llog] <- "t.log[i] ~ dlogis(lambda[i],tau)C(cens.log[i],)"           # log-logistic
       mod.data[genf] <- "t[i] ~ df(df1,df2,lambda[i],shape)C(cens[i],)"        # generalised F
       mod.data[gompz] <- "dummy[i] <- 0\n dummy[i] ~ dloglik(logLike[i]) \n logLike[i] <- -lambda[i]/shape * (exp(shape * t[i]) -1) + death[i]*(log(lambda[i])+shape*t[i])"        # Gompertz dist doing the loglik trick 
-      mod.data[exp_d] <- "dummy[i] <- 0 \n dummy[i] ~ dloglik(logLike[i]) \n logLike[i] <- death[i]*log(lambda[i])-lambda[i]*t[i]"
+      mod.data[dexp] <- "dummy[i] <- 0 \n dummy[i] ~ dloglik(logLike[i]) \n logLike[i] <- death[i]*log(lambda[i])-lambda[i]*t[i]"
       mod.data[weibPH] <- "t[i] ~ dweib(shape,lambda[i])C(cens[i],)" # weibullPH
+      mod.data[dloglogis] <- "dummy[i] <- 0 \n dummy[i] ~ dloglik(logLike[i]) \n logLike[i] <- death[i]*(log(shape) - log(lambda[i]) + (shape - 1)*(log(t[i]) - log(lambda[i])) - log(1 + (pow(t[i]/lambda[i],shape)))) -log(1 + (pow(t[i]/lambda[i],shape))) " # Loglogistic
 
       # ... all other models I want to implement
       # Linear predictor 
@@ -356,8 +358,9 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
       parameters[llog] <- "tau ~ dgamma(a.shape,b.shape)\n"
       parameters[genf] <- "shape ~ dgamma(a.shape,b.shape) \n df1 ~ dgamma(a.n,b.n) \n df2 ~ dgamma(a.m,b.m)\n "
       parameters[gompz] <- "shape ~ dgamma(a.shape,b.shape)\n "
-      parameters[exp_d] <- " "
+      parameters[dexp] <- " "
       parameters[weibPH] <- "shape ~ dgamma(a.shape,b.shape)\n "
+      parameters[dloglogis] <- "shape ~ dgamma(a.shape,b.shape)\n "
 
       # ... priors for all the other models I will implement
 
@@ -374,8 +377,9 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
       labels[llog] <- paste0("# log-Logistic model - written on: ",Sys.time())
       labels[genf] <- paste0("# Generalised F model - written on: ",Sys.time())
       labels[gompz] <- paste0("# Gompertz model - written on: ",Sys.time())
-      labels[exp_d] <- paste0("# Exponential dummy model - written on: ",Sys.time())
+      labels[dexp] <- paste0("# Exponential dummy model - written on: ",Sys.time())
       labels[weibPH] <- paste0("# Weibull model (PH parameterisation) - written on: ",Sys.time())
+      labels[dloglogis] <- paste0("# Loglogistic model  - written on: ",Sys.time())
       
       # Determines which data model has been used and selects the relevant text
       model.string <- paste0(labels[position],"\n",start.mod,"\n",start.loop,"\n",
@@ -390,7 +394,7 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
         # 2. Creates a little function that writes the relevant data to a list (to be passed to OpenBUGS)
     write.data <- function(position) {
       # Associates models with indices (just to read the code more neatly)
-      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6; genf <- 7; gompz <-8; exp_d <- 9; weibPH <- 10
+      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6; genf <- 7; gompz <-8; dexp <- 9; weibPH <- 10 ; dloglogis <- 11
 
       # Basic data (observed variables -- irrespective of the distribution)
       # Needs to define defaults for the parameters of the intercept & trt.effect
@@ -409,7 +413,7 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
 #                               mu.beta=mu.beta,tau.beta=tau.beta,n=dim(data)[1]
 #                          )
 #         )
-      } else if (position %in% c(7,8,9)){
+      } else if (position %in% c(7,8,9,11)){
         dataBugs <- list(
           "death"= ifelse(eval(parse(text=paste0("data$",event)))==1,1,0),
           "t"=eval(parse(text=paste0("data$",time))),
@@ -460,8 +464,9 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
       hyperpars[llog] <- hyperpars[1] 
       hyperpars[genf] <-  "dataBugs$a.shape=0;dataBugs$b.shape=1000;"
       hyperpars[gompz] <-  "dataBugs$a.shape=0.001;dataBugs$b.shape=0.001;"
-      hyperpars[exp_d] <- ""
+      hyperpars[dexp] <- ""
       hyperpars[weibPH] <- hyperpars[1] 
+      hyperpars[dloglogis] <-  "dataBugs$a.shape=0.001;dataBugs$b.shape=0.001;"
 
       eval(parse(text=hyperpars[position]))
       return(dataBugs)
@@ -470,14 +475,14 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
     # Inits
   inits <- function(){
       # Associates models with indices (just to read the code more neatly)
-      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6 ; genf <- 7; gompz <- 8 ; exp_d <- 9 ; weibPH <- 10
+      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6 ; genf <- 7; gompz <- 8 ; dexp <- 9 ; weibPH <- 10 ; dloglogis <- 11
       position <- pmatch(distr,availables.mcmc)
       dataBugs <- write.data(position)
       
       inits.list <- list()
       if (position==6) {
         inits.t <- eval(parse(text="inits.list$t.log=ifelse(dataBugs$cens.log!=-20,log(exp(dataBugs$cens.log)+1),NA)"))
-      } else if (position %in% c(7,8,9)){
+      } else if (position %in% c(7,8,9,11)){
         #inits.t <- eval(parse(text="inits.list$t=dataBugs$t+1"))
         print("t is observed")
 
@@ -493,8 +498,9 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
       inits.par[llog] <- paste0("inits.list$tau=runif(1)")
       inits.par[genf] <- paste0("inits.list$shape=runif(1);inits.list$df1=runif(1);inits.list$df2=runif(1)")
       inits.par[gompz] <- paste0("inits.list$shape=runif(1)")
-      inits.par[exp_d] <- ""
+      inits.par[dexp] <- ""
       inits.par[weibPH] <- paste0("inits.list$shape=runif(1)")
+      inits.par[dloglogis] <- paste0("inits.list$shape=runif(1)")
 
 
       eval(parse(text=inits.par[position]))
@@ -541,7 +547,7 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
     # 5. Creates a little function that defines the parameters to be monitored
     write.params <- function(position) {
       # Associates models with indices (just to read the code more neatly)
-      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6 ; genf <-7 ; gompz <- 8 ; exp_d <- 9 ; weibPH <- 10;
+      weib <- 1; expo <- 2; ggam <- 3; lnor <- 4; gamm <- 5; llog <- 6 ; genf <-7 ; gompz <- 8 ; dexp <- 9 ; weibPH <- 10; ; dloglogis <- 11
       
       params <- character()
       params[weib] <- paste0("c('beta','shape'")
@@ -549,11 +555,12 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
       params[ggam] <- paste0("c('beta'")
       params[lnor] <- paste0("c('beta','sd'")
       params[gamm] <- paste0("c('beta','shape'")
-      params[llog] <- paste0("c('beta','tau','lambda'")
+      params[llog] <- paste0("c('beta','tau',")
       params[genf] <- paste0("c('beta','shape','df1','df2'")
       params[gompz] <- paste0("c('beta','shape'")
-      params[exp_d] <- paste0("c('beta','shape'")
+      params[dexp] <- paste0("c('beta'")
       params[weibPH] <- paste0("c('beta','shape'")
+      params[dloglogis] <- paste0("c('beta','shape'")
 
       if (!is.null(covs)) {
         params <- paste(params,"'gamma'",sep=",")
@@ -568,7 +575,6 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
       params <- paste0(params,")")
       eval(parse(text=params[position]))
     }
-    
     # If n.iter is set to 0, then will only create model file, data list and inits list
     if(n.iter==0) {
       mod <- list()
@@ -579,13 +585,13 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
       mod$inits <- lapply(1:n.chains,function(i) inits())
       aic <- bic <- dic <- time2run <- NULL
     } else {
-      runBUGS <- function(distr) {
+      runBUGS <- function(distr) {        
         print("get position")
         position <- pmatch(distr,availables.mcmc)
+        print(position)
+        print(distr)
         print("write data")
         dataBugs <- write.data(position)
-        print(names(dataBugs))
-        print(position)
         print("get params")
         params <- write.params(position)
         print("write model")
@@ -605,11 +611,12 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
       mod <- lapply(output, function(x) x$model)
       time2run <- unlist(lapply(output, function(x) x$time2run)); names(time2run) <- labs
       for (i in 1:length(distr)) {mod[[i]]$dlist$name <- distr[i]}
-      
-      ## NEED TO RECOMPUTE THE DEVIANCE FOR THE log-logistic MODEL WHICH IS FITTED TO *log* DATA!
+     for (i in 1:length(distr)){
+      # NEED TO RECOMPUTE THE DEVIANCE FOR THE log-logistic MODEL WHICH IS FITTED TO *log* DATA!
       if(mod[[i]]$dlist$name=="loglogistic") {
+        print("recomputing log")
         position <- pmatch(mod[[i]]$dlist$name,availables.mcmc)
-        dataBugs <- mod$dataBugs <- write.data(position) 
+        dataBugs <- mod[[i]]$dataBugs <- write.data(position) 
         # Computes the density for the log-logistic model
         f <- function(t,shape,scale){
           num <- (shape/scale)*(t/scale)^(shape-1)
@@ -628,33 +635,32 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
         }
         
         # Defines shape & scale based on the estimated parameters
-        shape=mod[[1]]$sims.list$tau
-        scale=exp(mod[[1]]$sims.list$lambda)
+        shape=mod[[i]]$sims.list$tau
+        scale=exp(mod[[i]]$sims.list$lambda)
         scale1 <- scale[,which(!is.na(dataBugs$t.log))]
         scale2 <- scale[,which(is.na(dataBugs$t.log))]
         
         # Defines the relevant times (on the NATURAL scale)
-        print(names(dataBugs))
         obs.time <- exp(dataBugs$t.log[!is.na(dataBugs$t.log)])
         cens.time <- exp(dataBugs$cens.log[is.na(dataBugs$t.log)])
-#        all.time <- ifelse(is.na(dataBugs$t.log),exp(dataBugs$cens.log),exp(dataBugs$t.log))
-        
+#       all.time <- ifelse(is.na(dataBugs$t.log),exp(dataBugs$cens.log),exp(dataBugs$t.log))
         # Computes the log-likelihood (including censoring) & the deviance on the NATURAL scale
-        log.lik1 <- matrix(0,mod[[1]]$n.sims,length(obs.time))
-        log.lik2 <- matrix(0,mod[[1]]$n.sims,length(cens.time))
+        log.lik1 <- matrix(0,mod[[i]]$n.sims,length(obs.time))
+        log.lik2 <- matrix(0,mod[[i]]$n.sims,length(cens.time))
         # log.lik3 <- matrix(0,mod[[1]]$n.sims,length(all.time))
         
+
         log.lik1 <- matrix(unlist(lapply(1:dim(log.lik1)[1],function(i) {
           lapply(1:length(obs.time),function(j) {
             sum(log(f(obs.time[j],shape[i],scale1[i,j])))
           })
-        })),nrow=model$n.sims,ncol=length(obs.time))
+        })),nrow=mod[[i]]$n.sims,ncol=length(obs.time))
         
         log.lik2 <- matrix(unlist(lapply(1:dim(log.lik2)[1],function(i) {
           lapply(1:length(cens.time),function(j) {
             sum(log(S(cens.time[j],shape[i],scale2[i,j])))
           })
-        })),nrow=model$n.sims,ncol=length(cens.time))
+        })),nrow=mod[[i]]$n.sims,ncol=length(cens.time))
         
 #         log.lik3 <- matrix(unlist(lapply(1:dim(log.lik3)[1],function(i) {
 #           lapply(1:length(all.time),function(j) {
@@ -664,13 +670,13 @@ fit.models <- function(formula=NULL,data,distr=NULL,method="mle",...) {
         
         log.lik <- apply(log.lik1,1,sum)+apply(log.lik2,1,sum)###-apply(log.lik3,1,sum)
         deviance <- -2*log.lik
-        mod[[1]]$sims.list$deviance.log <- mod[[1]]$sims.list$deviance
-        mod[[1]]$sims.list$deviance <- deviance
-        mod[[1]]$summary["deviance",1:7] <- c(mean(deviance),sd(deviance),quantile(deviance,.025),quantile(deviance,.25),
+        mod[[i]]$sims.list$deviance.log <- mod[[i]]$sims.list$deviance
+        mod[[i]]$sims.list$deviance <- deviance
+        mod[[i]]$summary["deviance",1:7] <- c(mean(deviance),sd(deviance),quantile(deviance,.025),quantile(deviance,.25),
                                            median(deviance),quantile(deviance,.75),quantile(deviance,.975))
-        mod[[1]]$DIC <- mod[[1]]$summary["deviance",1]+mod[[1]]$pD
+        mod[[i]]$DIC <- mod[[i]]$summary["deviance",1]+mod[[i]]$pD
       }
-      
+      }
       aic <- unlist(lapply(mod, function(x) 2*x$pD+x$summary["deviance",1]))
       bic <- unlist(lapply(mod, function(x) x$summary["deviance",1]+x$pD*log(sum(ObjSurvfit$n))))
       dic <- unlist(lapply(mod, function(x) x$DIC))
@@ -954,7 +960,7 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,...) {
         scale <- exp(linpred)
         S <- lapply(1:nsim,function(i) {
           lapply(1:dim(scale)[2],function(j) {
-            cbind(t,dllogis(t,shape[i],scale[i,j])/hllogis(t,shape[i],scale[i,j]))
+            cbind(t,dlogis(log(t),scale[i,j],1/shape[i])/hllogis(log(t),scale[i,j],helpshape[i]))
           })
         })
       }
@@ -993,6 +999,13 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,...) {
       }
       if (m$dlist$name=="loglogistic") {
         shape <- mean(m$sims.matrix[,"tau"])
+        scale <- exp(linpred)
+        S[[1]] <- lapply(1:length(scale),function(j) {
+          cbind(t,dllogis(t,shape,scale[j])/hllogis(t,shape,scale[j]))
+        })
+      }
+      if (m$dlist$name=="dloglogis") {
+        shape <- mean(m$sims.matrix[,"shape"])
         scale <- exp(linpred)
         S[[1]] <- lapply(1:length(scale),function(j) {
           cbind(t,dllogis(t,shape,scale[j])/hllogis(t,shape,scale[j]))
@@ -1059,6 +1072,15 @@ make.surv <- function(fit,mod=1,t=NULL,newdata=NULL,nsim=1,...) {
         scale <- exp(linpred)
         S <- lapply(1:nsim,function(i) {
           lapply(1:dim(mulog)[2],function(j) {
+            cbind(t,dllogis(t,shape[i],scale[i,j])/hllogis(t,shape[i],scale[i,j]))
+          })
+        })
+      }
+      if (m$dlist$name=="dloglogis") {
+        shape <- mean(m$sims.matrix[,"shape"])
+        scale <- exp(linpred)
+        S <- lapply(1:nsim,function(i) {
+          lapply(1:dim(scale)[2],function(j) {
             cbind(t,dllogis(t,shape[i],scale[i,j])/hllogis(t,shape[i],scale[i,j]))
           })
         })
@@ -1372,7 +1394,7 @@ psa.plot <- function(psa,...) {
   n.elements <- length(psa$S[[1]]) 
   times <- psa$S[[1]][[1]][,1]
   exArgs <- list(...)
-  if(!exists("xlab",where=exArgs)) {xlab="time"} else {xlab=exArgs$xlab}
+  if(!exists("xlab",where=exArgs)) {xlab="Time"} else {xlab=exArgs$xlab}
   if(!exists("ylab",where=exArgs)) {ylab="Survival"} else {ylab=exArgs$ylab}
   if(!exists("col",where=exArgs)) {col=sample(colors(),n.elements)} else {col=exArgs$col}
   if(!exists("alpha",where=exArgs)) {alpha=0.1} else {alpha=exArgs$alpha}
@@ -1394,9 +1416,12 @@ psa.plot <- function(psa,...) {
     q025 <- lapply(1:n.elements, function(j) apply(tmp[[j]],2,function(x) quantile(x,.025)))
     q500 <- lapply(1:n.elements, function(j) apply(tmp[[j]],2,function(x) quantile(x,.5))) 
     q975 <- lapply(1:n.elements, function(j) apply(tmp[[j]],2,function(x) quantile(x,.975))) 
-    
-    plot(psa$S[[1]][[1]][,1],q500[[1]],col=adjustcolor(col[1],1),t="l",xlab=xlab,ylab=ylab,ylim=c(0,1),
-         xlim=range(pretty(times)),lwd=2,main=main,axes=F)
+    print(psa$S[[1]][[1]][,1])
+    print(q500[[1]])
+    print(adjustcolor(col[1],1))
+    #plot(psa$S[[1]][[1]][,1],q500[[1]],col=adjustcolor(col[1],1),t="l",xlab=xlab,ylab=ylab,ylim=c(0,1),xlim=range(pretty(times)),lwd=2,main=main,axes=F)
+    points(psa$S[[1]][[1]][,1],q500[[1]],col=adjustcolor(col[1],1),t="l",lwd=2,main=main)
+
     polygon(c(psa$S[[1]][[1]][,1],rev(psa$S[[1]][[1]][,1])),c(q975[[1]],rev(q025[[1]])),col=adjustcolor(col[1],alpha),border=NA)
     if (n.elements>1) {
         lapply(2:n.elements, function(i) {
@@ -1466,6 +1491,8 @@ plot.survHE <- function(x,...) {
     labs[pmatch("llogis",labs)] <- "log-Logistic"
     labs[pmatch("loglogistic",labs)] <- "log-Logistic"
     labs[pmatch("gengamma",labs)] <- "Gen. Gamma"
+    labs[pmatch("dloglogis",labs)] <- "log-Logistic"
+
   } else {labs=exArgs$labs}
   labs <- c("Kaplan Meier",labs)
   if (!exists("add.km",where=exArgs)) {add.km=TRUE} else {add.km=exArgs$add.km}
@@ -1673,7 +1700,7 @@ model.fit.plot <- function(fit,type="aic",...) {
   )
 }
 
-test.linear.assumptions <- function(fit,mod=1){
+test.linear.assumptions <- function(fit,mod=1,coxph=TRUE,label = FALSE){
   m <- fit$models[[mod]]
   dist <- m$dlist$name
   split_vector <- c(1)
@@ -1683,22 +1710,28 @@ test.linear.assumptions <- function(fit,mod=1){
   }
   }
   split_vector <- c(split_vector,length(fit$misc$km$time))
-  split_mat <- matrix(split_vector,length(split_vector)/2,2)
+  split_mat <- matrix(split_vector,length(split_vector)/2,2,byrow = T)
   times <- lapply(1:dim(split_mat)[1],function(x) fit$misc$km$time[split_mat[x,][1]:split_mat[x,][2]])
   survs <- lapply(1:dim(split_mat)[1],function(x) fit$misc$km$surv[split_mat[x,][1]:split_mat[x,][2]])
-  if (dist == "Exponential"){
+  if (dist %in% c("Exponential","exp","exponential")){
   plot(0,0,col="white",xlab='time',ylab='log(S(t))',axes=F,xlim=range(pretty(fit$misc$km$time)))
   axis(1)
   axis(2)
   pts <- lapply(1:dim(split_mat)[1],function(m) cbind(times[[m]],log(survs[[m]])))
     lapply(1:length(pts), function(x) points(pts[[x]],t="l",lty=x))
+    if (label){legend('topright','Exponential distributional assumption')}
+
+  #text(max(pts[[1]][,1]),max(pts[[1]][,2]), 'Exponential linear assumption', cex=0.6, col="red")
+
   }
-  if (dist %in% c("weibull","weibullPH")){
+  if (dist %in% c("weibull","weibullPH","weibull.quiet")){
   plot(0,0,col="white",xlab='log(time)',ylab='log(-log(S(t)))',axes=F,xlim=range(pretty(log(fit$misc$km$time))), ylim =range(pretty(log(-log(survs[[1]])))))
   axis(1)
   axis(2)
   pts <- lapply(1:dim(split_mat)[1],function(m) cbind(log(times[[m]]),log(-log(survs[[m]]))))
     lapply(1:length(pts), function(x) points(pts[[x]],t="l",lty=x))
+        if (label){legend('topright','Weibull distributional assumption')}
+
   }
   if (dist == "llogis"){
   plot(0,0,col="white",xlab='time',ylab='log(S(t)/(1-S(t)))',axes=F,xlim=range(pretty(log(fit$misc$km$time))), ylim =range(pretty(log(survs[[1]]/(1-survs[[1]])))))
@@ -1706,14 +1739,19 @@ test.linear.assumptions <- function(fit,mod=1){
   axis(2)
   pts <- lapply(1:dim(split_mat)[1],function(m) cbind(log(times[[m]]),log(survs[[m]]/(1-survs[[m]]))))
     lapply(1:length(pts), function(x) points(pts[[x]],t="l",lty=x))
+    if (label){legend('topright','log-Logistic distributional assumption')}
+
     }
-    if (dist == "lognormal"){
+    if (dist %in% c("lognormal","lnorm")){
       ### add log normal 
-  plot(0,0,col="white",xlab='time',ylab='log(S(t))',axes=F,xlim=range(pretty(log(fit$misc$km$time))), ylim =range())
+  plot(0,0,col="white",xlab='time',ylab='log(S(t))',axes=F,xlim=range(pretty(log(fit$misc$km$time)))   )#, ylim =range(qnorm(1-survs[[1]])))
   axis(1)
   axis(2)
   pts <- lapply(1:dim(split_mat)[1],function(m) cbind(times[[m]],qnorm(1-survs[[m]])))
-    lapply(1:length(pts), function(x) points(pts[[x]],t="l",lty=x))
+  print(pts)
+    lapply(1:length(pts), function(x) points(pts[[2]],t="l",lty=x))
+    if (label){legend('topright','lognormal distributional assumption')}
+
   }
   if (dist == "gompertz"){
   estimate.h <- function(s,t){
@@ -1728,6 +1766,7 @@ test.linear.assumptions <- function(fit,mod=1){
   axis(2)
   pts <- lapply(1:dim(split_mat)[1],function(m) data.table(cbind(times[[m]],estimate.h(survs[[m]],times[[m]])))[V2!=0,])
     lapply(1:length(pts), function(x) points(pts[[x]],t="l",lty=x))
+        if (label){legend('topright','Gompertz distributional assumption')}
 
   }
 }

@@ -1,5 +1,5 @@
 rm(list=ls())
-setwd("~/Msc/Diss/")
+#setwd("~/Msc/Diss/")
 
 library(flexsurv)
 library(INLA)
@@ -111,6 +111,7 @@ fit.mcmc <- fit.models(formula=formula,data=dat,distr="gompz",method="mcmc",n.it
 
 tmp <- fit.models(formula=formula,data=dat,distr="loglogistic",method="mcmc",n.iter=10000,
   useWINE = TRUE,WINEPATH=WINEPATH,OpenBUGS.pgm = OpenBUGS.pgm,WINE = WINE)
+
 
 psa <- make.surv(fit.inla,nsim = 100)
 
