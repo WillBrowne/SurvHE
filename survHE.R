@@ -1419,8 +1419,8 @@ psa.plot <- function(psa,...) {
     print(psa$S[[1]][[1]][,1])
     print(q500[[1]])
     print(adjustcolor(col[1],1))
-    #plot(psa$S[[1]][[1]][,1],q500[[1]],col=adjustcolor(col[1],1),t="l",xlab=xlab,ylab=ylab,ylim=c(0,1),xlim=range(pretty(times)),lwd=2,main=main,axes=F)
-    points(psa$S[[1]][[1]][,1],q500[[1]],col=adjustcolor(col[1],1),t="l",lwd=2,main=main)
+    plot(psa$S[[1]][[1]][,1],q500[[1]],col=adjustcolor(col[1],1),t="l",xlab=xlab,ylab=ylab,ylim=c(0,1),xlim=range(pretty(times)),lwd=2,main=main,axes=F)
+    #points(psa$S[[1]][[1]][,1],q500[[1]],col=adjustcolor(col[1],1),t="l",lwd=2,main=main)
 
     polygon(c(psa$S[[1]][[1]][,1],rev(psa$S[[1]][[1]][,1])),c(q975[[1]],rev(q025[[1]])),col=adjustcolor(col[1],alpha),border=NA)
     if (n.elements>1) {
